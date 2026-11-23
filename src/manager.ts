@@ -275,7 +275,7 @@ export class McpManager {
           const connection = await this.connection(current);
           if (currentConnectionKey !== listedConnectionKey) {
             let verified = false;
-            const verifySignal = AbortSignal.any([call.signal, AbortSignal.timeout(timeout)]);
+            const verifySignal = call.signal;
             try {
               verified = await this.verifyListedTool(
                 connection,
