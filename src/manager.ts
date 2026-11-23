@@ -29,6 +29,10 @@ function suffixed(base: string, suffix: string): string {
   return `${prefix}_${suffix}`;
 }
 
+function toolName(serverId: string, remoteName: string): string {
+  return suffixed(baseName(serverId, remoteName), hashOf(`${serverId}\0${remoteName}`));
+}
+
 function claimName(candidate: string, used: Set<string>, seed: string): string {
   if (!used.has(candidate)) {
     used.add(candidate);
@@ -61,7 +65,6 @@ const errorName = (error: unknown): string => (error instanceof Error ? error.na
 
 interface FetchedServer {
   server: NormalizedServer;
-  connection: McpConnection;
   remote: Tool[];
 }
 
@@ -74,7 +77,12 @@ export class McpManager {
     private connect: ConnectMcp = connectMcp,
   ) {
     this.setConfig(ctx.config);
-    // Tools re-read ctx.config on every list, so cmd: refs refresh from the cache.
+    // Save-time validation rejects bad server entries before they are applied.
+    ctx.onConfigCheck((next) => {
+      const checked = normalizeServers(next);
+      if (checked.errors.length > 0) throw new Error(checked.errors.join("; "));
+    });
+    // Tools re-read ctx.config on every list and call, so cmd: refs refresh from the cache.
     ctx.onConfigChange(() => undefined);
     ctx.onDispose(() => this.dispose());
   }
@@ -108,8 +116,7 @@ export class McpManager {
     );
     const tools: ToolDefinition[] = [];
     for (const item of fetched) {
-      if (item !== undefined)
-        tools.push(...this.definitions(item.server, item.connection, item.remote, used));
+      if (item !== undefined) tools.push(...this.definitions(item.server, item.remote, used));
     }
     return tools.sort((a, b) => a.name.localeCompare(b.name));
   }
@@ -121,7 +128,7 @@ export class McpManager {
   private async fetchServer(server: NormalizedServer): Promise<FetchedServer> {
     const connection = await this.connection(server);
     try {
-      return { server, connection, remote: await this.listRemote(connection, server) };
+      return { server, remote: await this.listRemote(connection, server) };
     } catch (error) {
       this.pending.delete(server.id);
       await connection.close().catch(() => undefined);
@@ -129,25 +136,16 @@ export class McpManager {
     }
   }
 
-  private definitions(
-    server: NormalizedServer,
-    connection: McpConnection,
-    remote: Tool[],
-    used: Set<string>,
-  ): ToolDefinition[] {
+  private definitions(server: NormalizedServer, remote: Tool[], used: Set<string>): ToolDefinition[] {
     const usable = remote.filter((tool) => {
       if (tool.execution?.taskSupport !== "required") return true;
       this.ctx.log.debug("skipping task-only MCP tool", { server: server.id, tool: tool.name });
       return false;
     });
-    const names = usable.map((tool) => ({ tool, base: baseName(server.id, tool.name) }));
-    const counts = new Map<string, number>();
-    for (const { base } of names) counts.set(base, (counts.get(base) ?? 0) + 1);
     const tools: ToolDefinition[] = [];
-    for (const { tool, base } of names) {
+    for (const tool of usable) {
       const seed = `${server.id}\0${tool.name}`;
-      const candidate = (counts.get(base) ?? 0) > 1 ? suffixed(base, hashOf(seed)) : base;
-      tools.push(this.definition(server, connection, tool, claimName(candidate, used, seed)));
+      tools.push(this.definition(server, tool, claimName(toolName(server.id, tool.name), used, seed)));
     }
     return tools;
   }
@@ -177,18 +175,12 @@ export class McpManager {
     return pending;
   }
 
-  private definition(
-    server: NormalizedServer,
-    connection: McpConnection,
-    tool: Tool,
-    name: string,
-  ): ToolDefinition {
+  private definition(server: NormalizedServer, tool: Tool, name: string): ToolDefinition {
     const remoteName = tool.name;
     const remoteDescription = tool.description?.trim();
     const description = remoteDescription
       ? `${remoteDescription}\n\nMCP server: ${server.label} (${server.id}).`
       : `Call ${remoteName} on MCP server ${server.label} (${server.id}).`;
-    const timeout = server.timeoutMs;
     const ctx = this.ctx;
     return defineTool(
       {
@@ -197,6 +189,16 @@ export class McpManager {
         inputSchema: { type: "object", ...(tool.inputSchema as Record<string, unknown>) },
         permission: PERMISSION,
         invoke: async (input, call) => {
+          this.setConfig(this.ctx.config);
+          const current = this.servers.find((candidate) => candidate.id === server.id);
+          if (current === undefined) {
+            return {
+              content: [{ type: "text", text: `MCP server "${server.id}" is not active.` }],
+              isError: true,
+            };
+          }
+          const connection = await this.connection(current);
+          const timeout = current.timeoutMs;
           const result = await connection.callTool(
             { name: remoteName, arguments: input as Record<string, unknown> },
             {

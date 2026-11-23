@@ -21,19 +21,22 @@ function managerFor() {
     ["github", github],
     ["local", local],
   ]);
-  const ctx = fakeCtx(config);
+  const fresh = structuredClone(config);
+  const ctx = fakeCtx(fresh);
   const manager = new McpManager(ctx, async (server) => {
     const found = byId.get(server.id);
     if (!found) throw new Error(`unexpected server ${server.id}`);
     return found.connection;
   });
-  return { manager, github, local, config };
+  return { manager, github, local, config: fresh };
 }
 
 test("lists remote MCP tools as namespaced Valet tools", async () => {
   const { manager, github, local } = managerFor();
   const tools = await manager.list();
-  expect(tools.map((t) => t.name)).toEqual(["mcp_github__search_issues", "mcp_local__run_command"]);
+  const names = tools.map((t) => t.name);
+  expect(names[0]).toMatch(/^mcp_github__search_issues_[0-9a-f]{8}$/);
+  expect(names[1]).toMatch(/^mcp_local__run_command_[0-9a-f]{8}$/);
   expect(tools[0]?.description).toContain("Search issues");
   expect(tools[0]?.description).toContain("GitHub (github)");
   expect(tools[0]?.inputSchema).toMatchObject({ type: "object", required: ["q"] });
@@ -86,7 +89,23 @@ test("re-reads ctx config on each list", async () => {
   const second = (config.servers as { active?: boolean }[])[1];
   if (second !== undefined) second.active = false;
   const tools = await manager.list();
-  expect(tools.map((t) => t.name)).toEqual(["mcp_github__search_issues"]);
+  expect(tools).toHaveLength(1);
+  expect(tools[0]?.name).toMatch(/^mcp_github__search_issues_[0-9a-f]{8}$/);
+  expect(local.closed()).toBe(true);
+  await manager.dispose();
+});
+
+test("saved tools stop calling after a server is deactivated", async () => {
+  const { manager, local, config } = managerFor();
+  const tools = await manager.list();
+  const localTool = tools.find((t) => t.name.startsWith("mcp_local__run_command_"));
+  expect(localTool).toBeDefined();
+  const second = (config.servers as { active?: boolean }[])[1];
+  if (second !== undefined) second.active = false;
+  const result = await localTool?.invoke({}, call());
+  expect(result?.isError).toBe(true);
+  expect(textOf(result ?? { content: [] })).toContain("not active");
+  expect(local.calls).toEqual([]);
   expect(local.closed()).toBe(true);
   await manager.dispose();
 });

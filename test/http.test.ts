@@ -81,10 +81,12 @@ test("connectMcp lists and calls tools over Streamable HTTP", async () => {
   });
   const manager = new McpManager(ctx);
   const tools = await manager.list();
-  expect(tools.map((t) => t.name)).toEqual(["mcp_fake__echo_text", "mcp_fake__tuple"]);
+  const names = tools.map((t) => t.name);
+  expect(names[0]).toMatch(/^mcp_fake__echo_text_[0-9a-f]{8}$/);
+  expect(names[1]).toMatch(/^mcp_fake__tuple_[0-9a-f]{8}$/);
   const result = await tools[0]?.invoke({ text: "hello" }, call());
   expect(textOf(result ?? { content: [] })).toBe('echo:{"text":"hello"}');
-  const tuple = tools.find((t) => t.name === "mcp_fake__tuple");
+  const tuple = tools.find((t) => t.name.startsWith("mcp_fake__tuple_"));
   const tupleResult = await tuple?.invoke({}, call());
   expect(tupleResult?.isError).not.toBe(true);
   expect(textOf(tupleResult ?? { content: [] })).toContain("tuple-ok");
