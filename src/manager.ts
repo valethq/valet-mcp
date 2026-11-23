@@ -193,13 +193,18 @@ export class McpManager {
     return tools;
   }
 
-  private async listRemote(connection: McpConnection, server: NormalizedServer): Promise<Tool[]> {
+  private async listRemote(
+    connection: McpConnection,
+    server: NormalizedServer,
+    signal?: AbortSignal,
+  ): Promise<Tool[]> {
     const tools: Tool[] = [];
     let cursor: string | undefined;
     do {
       const page = await connection.listTools(cursor === undefined ? undefined : { cursor }, {
         timeout: server.timeoutMs,
         maxTotalTimeout: server.timeoutMs,
+        ...(signal === undefined ? {} : { signal }),
       });
       tools.push(...page.tools);
       cursor = page.nextCursor;
@@ -212,8 +217,9 @@ export class McpManager {
     server: NormalizedServer,
     remoteName: string,
     expectedSchema: string,
+    signal?: AbortSignal,
   ): Promise<boolean> {
-    const remote = await this.listRemote(connection, server);
+    const remote = await this.listRemote(connection, server, signal);
     return remote.some(
       (candidate) =>
         candidate.name === remoteName && JSON.stringify(canonical(candidate.inputSchema)) === expectedSchema,
@@ -264,12 +270,20 @@ export class McpManager {
               isError: true,
             };
           }
+          const timeout = current.timeoutMs;
           const currentConnectionKey = connectionKey(current);
           const connection = await this.connection(current);
           if (currentConnectionKey !== listedConnectionKey) {
             let verified = false;
+            const verifySignal = AbortSignal.any([call.signal, AbortSignal.timeout(timeout)]);
             try {
-              verified = await this.verifyListedTool(connection, current, remoteName, expectedSchema);
+              verified = await this.verifyListedTool(
+                connection,
+                current,
+                remoteName,
+                expectedSchema,
+                verifySignal,
+              );
             } catch (error) {
               return {
                 content: [
@@ -289,7 +303,6 @@ export class McpManager {
             }
             listedConnectionKey = currentConnectionKey;
           }
-          const timeout = current.timeoutMs;
           const result = await connection.callTool(
             { name: remoteName, arguments: input as Record<string, unknown> },
             {
