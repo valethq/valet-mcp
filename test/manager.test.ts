@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { allowedTools } from "@valethq/sdk";
 import { McpManager } from "../src/manager";
 import { call, fakeConnection, fakeCtx, textOf, tool } from "./helpers";
@@ -163,7 +164,11 @@ test("header backend change does not call a changed tool surface", async () => {
   const config = { servers: [{ id: "svc", url, headers: { Authorization: "Bearer old" } }] };
   const ctx = fakeCtx(config);
   const oldServer = fakeConnection([tool("echo")]);
-  const newServer = fakeConnection([tool("other")]);
+  const changed: Tool = {
+    ...tool("echo"),
+    inputSchema: { type: "object", properties: { other: { type: "number" } } },
+  };
+  const newServer = fakeConnection([changed]);
   const manager = new McpManager(ctx, async (server) => {
     const auth = server.headers.Authorization;
     if (auth === "Bearer old") return oldServer.connection;
