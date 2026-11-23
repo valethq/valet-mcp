@@ -188,6 +188,48 @@ test("header backend change does not call a changed tool surface", async () => {
   await manager.dispose();
 });
 
+test("verification uses the caller abort signal", async () => {
+  const url = "https://mcp.example/svc";
+  const config = { servers: [{ id: "svc", url, headers: { Authorization: "Bearer old" } }] };
+  const ctx = fakeCtx(config);
+  const oldServer = fakeConnection([tool("echo")]);
+  const newServer = fakeConnection([tool("echo")]);
+  const seen: (AbortSignal | undefined)[] = [];
+  newServer.connection.listTools = async (_params, options) => {
+    seen.push(options?.signal);
+    const signal = options?.signal;
+    if (signal === undefined) throw new Error("missing signal");
+    await new Promise<never>((_, reject) => {
+      if (signal.aborted) reject(signal.reason);
+      else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+    return { tools: [] };
+  };
+  const manager = new McpManager(ctx, async (server) => {
+    const auth = server.headers.Authorization;
+    if (auth === "Bearer old") return oldServer.connection;
+    if (auth === "Bearer new") return newServer.connection;
+    throw new Error(`unexpected auth ${auth}`);
+  });
+  const listed = (await manager.list())[0];
+  if (listed === undefined) throw new Error("missing tool");
+  const svc = config.servers[0];
+  if (svc !== undefined) svc.headers.Authorization = "Bearer new";
+  const controller = new AbortController();
+  const toolCall = { ...call(), signal: controller.signal };
+  const pending = listed.invoke({ q: "refresh" }, toolCall);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  controller.abort();
+
+  const result = await pending;
+  expect(result.isError).toBe(true);
+  expect(seen).toHaveLength(1);
+  expect(seen[0]?.aborted).toBe(true);
+  expect(oldServer.calls).toEqual([]);
+  expect(newServer.calls).toEqual([]);
+  await manager.dispose();
+});
+
 test("rediscovery after endpoint change routes calls to the replacement", async () => {
   const oldUrl = "https://old.example/mcp";
   const newUrl = "https://new.example/mcp";
