@@ -1,0 +1,26 @@
+{
+  "name": "valet-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "tools@1 proxy for tools exposed by configured MCP servers.",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p .",
+    "lint": "biome check .",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@valethq/sdk": "0.6.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.7",
+    "@types/bun": "^1.4.4",
+    "typescript": "^7.0.2"
+  },
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/valethq/valet-mcp.git"
+  }
+}

@@ -1,0 +1,141 @@
+{
+  "schema": 1,
+  "id": "valet-mcp",
+  "name": "MCP Servers",
+  "version": "0.1.0",
+  "description": "tools@1 proxy for tools exposed by configured MCP servers.",
+  "repository": "https://github.com/valethq/valet-mcp",
+  "valet": "^0.1.1",
+  "main": "./src/index.ts",
+  "provides": ["tools@1"],
+  "acl": {
+    "permissions": {
+      "call": {
+        "summary": "Call tools on configured MCP servers",
+        "default": "owner"
+      }
+    }
+  },
+  "settings": {
+    "sections": {
+      "tools": {
+        "subsections": [
+          {
+            "id": "servers",
+            "label": "Servers",
+            "items": [
+              {
+                "id": "servers",
+                "label": "MCP servers",
+                "summary": "Each active server's tools are exposed to valet runs as mcp_<server>__<tool>_<hash>.",
+                "input": {
+                  "type": "list",
+                  "item": {
+                    "type": "group",
+                    "inputs": [
+                      {
+                        "id": "id",
+                        "type": "strict_string",
+                        "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+                        "patternHint": "lowercase letters, digits and dashes",
+                        "label": "Server id",
+                        "summary": "Used in proxied tool names. Unique.",
+                        "required": true
+                      },
+                      {
+                        "id": "label",
+                        "type": "string",
+                        "label": "Label",
+                        "summary": "Friendly name shown in tool descriptions."
+                      },
+                      {
+                        "id": "transport",
+                        "type": "select",
+                        "options": [
+                          { "value": "streamable-http", "label": "Streamable HTTP" },
+                          { "value": "stdio", "label": "stdio" }
+                        ],
+                        "default": "streamable-http",
+                        "label": "Transport",
+                        "summary": "Remote MCP over Streamable HTTP, or a local command over stdio."
+                      },
+                      {
+                        "id": "active",
+                        "type": "bool",
+                        "default": true,
+                        "label": "Active",
+                        "summary": "Inactive servers are ignored until active."
+                      },
+                      {
+                        "id": "url",
+                        "type": "url",
+                        "schemes": ["https", "http"],
+                        "label": "URL",
+                        "summary": "Streamable HTTP endpoint, e.g. https://example.com/mcp."
+                      },
+                      {
+                        "id": "headers",
+                        "type": "map",
+                        "key": { "type": "string", "label": "Header" },
+                        "value": {
+                          "type": "string",
+                          "refs": ["secret", "file", "env", "cmd"],
+                          "label": "Value"
+                        },
+                        "label": "Headers",
+                        "summary": "HTTP headers for every request. Values may use ${secret:...}, ${file:...}, ${env:...} or ${cmd:...}."
+                      },
+                      {
+                        "id": "command",
+                        "type": "string",
+                        "label": "Command",
+                        "summary": "stdio: executable that starts the MCP server."
+                      },
+                      {
+                        "id": "args",
+                        "type": "tags",
+                        "label": "Arguments",
+                        "summary": "stdio: arguments passed to the command."
+                      },
+                      {
+                        "id": "env",
+                        "type": "map",
+                        "key": { "type": "string", "label": "Variable" },
+                        "value": {
+                          "type": "string",
+                          "refs": ["secret", "file", "env", "cmd"],
+                          "label": "Value"
+                        },
+                        "label": "Environment",
+                        "summary": "stdio: extra environment variables. Values may use ${secret:...} and other refs."
+                      },
+                      {
+                        "id": "cwd",
+                        "type": "path",
+                        "kind": "dir",
+                        "label": "Working directory",
+                        "summary": "stdio: directory the command starts in."
+                      },
+                      {
+                        "id": "timeoutMs",
+                        "type": "duration",
+                        "min": 1000,
+                        "max": 600000,
+                        "default": 60000,
+                        "label": "Timeout",
+                        "summary": "Per-request timeout for discovery and calls."
+                      }
+                    ]
+                  },
+                  "default": [],
+                  "addLabel": "Add server"
+                }
+              }
+            ]
+          }
+        ],
+        "icon": "plug"
+      }
+    }
+  }
+}
