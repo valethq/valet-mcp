@@ -133,6 +133,55 @@ test("saved tools stay pinned to the config they were listed with", async () => 
   await manager.dispose();
 });
 
+test("credential refresh keeps listed tools callable", async () => {
+  const { manager, github, config } = managerFor();
+  const servers = config.servers as { id: string; headers?: Record<string, string> }[];
+  const githubServer = servers[0];
+  if (githubServer !== undefined) githubServer.headers = { Authorization: "Bearer old" };
+  const tools = await manager.list();
+  const githubTool = tools.find((t) => t.name.startsWith("mcp_github__search_issues_"));
+  expect(githubTool).toBeDefined();
+  if (githubServer !== undefined) githubServer.headers = { Authorization: "Bearer new" };
+
+  const result = await githubTool?.invoke({ q: "refresh" }, call());
+  expect(result?.isError).not.toBe(true);
+  expect(textOf(result ?? { content: [] })).toBe("ok");
+  expect(github.calls).toEqual([{ name: "search.issues", arguments: { q: "refresh" } }]);
+  await manager.dispose();
+});
+
+test("rediscovery after endpoint change routes calls to the replacement", async () => {
+  const oldUrl = "https://old.example/mcp";
+  const newUrl = "https://new.example/mcp";
+  const config = { servers: [{ id: "svc", url: oldUrl }] };
+  const ctx = fakeCtx(config);
+  const oldServer = fakeConnection([tool("echo")]);
+  const newServer = fakeConnection([tool("echo")]);
+  const manager = new McpManager(ctx, async (server) => {
+    if (server.url === oldUrl) return oldServer.connection;
+    if (server.url === newUrl) return newServer.connection;
+    throw new Error(`unexpected ${server.url}`);
+  });
+  const first = await manager.list();
+  const firstTool = first[0];
+  expect(firstTool?.name).toMatch(/^mcp_svc__echo_[0-9a-f]{8}$/);
+  const svc = config.servers[0];
+  if (svc !== undefined) svc.url = newUrl;
+
+  const stale = await firstTool?.invoke({ q: "old" }, call());
+  expect(stale?.isError).toBe(true);
+  expect(textOf(stale ?? { content: [] })).toContain("configuration changed");
+
+  const second = await manager.list();
+  const secondTool = second[0];
+  expect(secondTool?.name).toBe(firstTool?.name);
+  const result = await secondTool?.invoke({ q: "new" }, call());
+  expect(result?.isError).not.toBe(true);
+  expect(oldServer.calls).toEqual([]);
+  expect(newServer.calls).toEqual([{ name: "echo", arguments: { q: "new" } }]);
+  await manager.dispose();
+});
+
 test("keeps colliding remote names unique and stable", async () => {
   const ctx = fakeCtx({ servers: [{ id: "demo", url: "https://mcp.example/demo" }] });
   const conn = fakeConnection([tool("a.b"), tool("a b"), tool("a_b")]);

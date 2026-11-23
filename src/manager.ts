@@ -79,6 +79,24 @@ function connectionKey(server: NormalizedServer): string {
     .digest("hex");
 }
 
+function toolKey(server: NormalizedServer): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify(
+        canonical({
+          transport: server.transport,
+          url: server.url,
+          headers: Object.keys(server.headers).sort(),
+          command: server.command,
+          args: server.args,
+          env: Object.keys(server.env).sort(),
+          cwd: server.cwd,
+        }),
+      ),
+    )
+    .digest("hex");
+}
+
 const errorName = (error: unknown): string => (error instanceof Error ? error.name : typeof error);
 
 interface FetchedServer {
@@ -206,7 +224,7 @@ export class McpManager {
     const description = remoteDescription
       ? `${remoteDescription}\n\nMCP server: ${server.label} (${server.id}).`
       : `Call ${remoteName} on MCP server ${server.label} (${server.id}).`;
-    const serverKey = connectionKey(server);
+    const listedToolKey = toolKey(server);
     const ctx = this.ctx;
     return defineTool(
       {
@@ -223,7 +241,7 @@ export class McpManager {
               isError: true,
             };
           }
-          if (connectionKey(current) !== serverKey) {
+          if (toolKey(current) !== listedToolKey) {
             return {
               content: [
                 { type: "text", text: `MCP server "${server.id}" configuration changed; refresh tools.` },
