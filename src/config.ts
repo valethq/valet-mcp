@@ -40,7 +40,10 @@ export interface NormalizeResult {
 const ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const DEFAULT_TIMEOUT_MS = 60_000;
 function isLoopback(host: string): boolean {
-  return host === "localhost" || host === "::1" || host.startsWith("127.");
+  if (host === "localhost" || host === "::1") return true;
+  const parts = host.split(".");
+  if (parts.length !== 4 || parts[0] !== "127") return false;
+  return parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
 }
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() !== "" ? v : undefined);
@@ -85,23 +88,26 @@ export function normalizeServers(config: McpPluginConfig | undefined): Normalize
     }
     seen.add(id);
     const transport = raw?.transport === "stdio" ? "stdio" : "streamable-http";
+    const active = raw?.active !== false;
     const url = str(raw?.url);
     const command = str(raw?.command);
-    if (transport === "streamable-http" && url === undefined) {
-      errors.push(`${at}.url is required for streamable-http`);
-      continue;
-    }
-    if (transport === "streamable-http" && url !== undefined && !validHttpUrl(at, url, errors)) continue;
-    if (transport === "stdio" && command === undefined) {
-      errors.push(`${at}.command is required for stdio`);
-      continue;
+    if (active) {
+      if (transport === "streamable-http" && url === undefined) {
+        errors.push(`${at}.url is required for streamable-http`);
+        continue;
+      }
+      if (transport === "streamable-http" && url !== undefined && !validHttpUrl(at, url, errors)) continue;
+      if (transport === "stdio" && command === undefined) {
+        errors.push(`${at}.command is required for stdio`);
+        continue;
+      }
     }
     const cwd = str(raw?.cwd);
     servers.push({
       id,
       label: str(raw?.label) ?? id,
       transport,
-      active: raw?.active !== false,
+      active,
       ...(url !== undefined && { url }),
       headers: stringMap(raw?.headers) ?? {},
       ...(command !== undefined && { command }),
