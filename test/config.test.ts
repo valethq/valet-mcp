@@ -26,10 +26,11 @@ test("requires https except for loopback HTTP", () => {
     servers: [
       { id: "remote", url: "http://mcp.example" },
       { id: "local", url: "http://127.0.0.1:8787/mcp" },
+      { id: "alias", url: "http://127.0.0.2:8787/mcp" },
     ],
   });
   expect(result.errors).toEqual([
     "servers[0].url must use https (http is only allowed for loopback servers)",
   ]);
-  expect(result.servers.map((s) => s.id)).toEqual(["local"]);
+  expect(result.servers.map((s) => s.id)).toEqual(["local", "alias"]);
 });

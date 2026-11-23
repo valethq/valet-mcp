@@ -39,7 +39,9 @@ export interface NormalizeResult {
 
 const ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const DEFAULT_TIMEOUT_MS = 60_000;
-const LOOPBACK = new Set(["localhost", "127.0.0.1", "::1"]);
+function isLoopback(host: string): boolean {
+  return host === "localhost" || host === "::1" || host.startsWith("127.");
+}
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() !== "" ? v : undefined);
 const strings = (v: unknown): string[] =>
@@ -61,7 +63,7 @@ function validHttpUrl(at: string, url: string, errors: string[]): boolean {
   }
   if (parsed.protocol === "https:") return true;
   const host = parsed.hostname.replace(/^\[|\]$/g, "");
-  if (parsed.protocol === "http:" && LOOPBACK.has(host)) return true;
+  if (parsed.protocol === "http:" && isLoopback(host)) return true;
   errors.push(`${at}.url must use https (http is only allowed for loopback servers)`);
   return false;
 }
