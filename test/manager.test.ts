@@ -110,6 +110,29 @@ test("saved tools stop calling after a server is deactivated", async () => {
   await manager.dispose();
 });
 
+test("saved tools stay pinned to the config they were listed with", async () => {
+  const { manager, github, local, config } = managerFor();
+  const tools = await manager.list();
+  const githubTool = tools.find((t) => t.name.startsWith("mcp_github__search_issues_"));
+  const localTool = tools.find((t) => t.name.startsWith("mcp_local__run_command_"));
+  expect(githubTool).toBeDefined();
+  expect(localTool).toBeDefined();
+  const servers = config.servers as { id: string; url?: string }[];
+  const githubServer = servers[0];
+  if (githubServer !== undefined) githubServer.url = "https://mcp.example/github-v2";
+
+  const localResult = await localTool?.invoke({ q: "still local" }, call());
+  expect(localResult?.isError).not.toBe(true);
+  expect(local.calls).toEqual([{ name: "run.command", arguments: { q: "still local" } }]);
+  expect(local.closed()).toBe(false);
+
+  const githubResult = await githubTool?.invoke({ q: "wrong server" }, call());
+  expect(githubResult?.isError).toBe(true);
+  expect(textOf(githubResult ?? { content: [] })).toContain("configuration changed");
+  expect(github.calls).toEqual([]);
+  await manager.dispose();
+});
+
 test("keeps colliding remote names unique and stable", async () => {
   const ctx = fakeCtx({ servers: [{ id: "demo", url: "https://mcp.example/demo" }] });
   const conn = fakeConnection([tool("a.b"), tool("a b"), tool("a_b")]);

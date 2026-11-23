@@ -61,6 +61,24 @@ function canonical(value: unknown): unknown {
   return value;
 }
 
+function connectionKey(server: NormalizedServer): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify(
+        canonical({
+          transport: server.transport,
+          url: server.url,
+          headers: server.headers,
+          command: server.command,
+          args: server.args,
+          env: server.env,
+          cwd: server.cwd,
+        }),
+      ),
+    )
+    .digest("hex");
+}
+
 const errorName = (error: unknown): string => (error instanceof Error ? error.name : typeof error);
 
 interface FetchedServer {
@@ -95,9 +113,16 @@ export class McpManager {
     const normalized = normalizeServers(config);
     for (const error of normalized.errors) this.ctx.log.warn("invalid MCP server config", { error });
     const servers = normalized.servers.filter((server) => server.active);
-    if (JSON.stringify(canonical(servers)) === JSON.stringify(canonical(this.servers))) return;
+    const nextById = new Map(servers.map((server) => [server.id, server]));
+    const changed = new Set<string>();
+    for (const previous of this.servers) {
+      const current = nextById.get(previous.id);
+      if (current === undefined || connectionKey(current) !== connectionKey(previous)) {
+        changed.add(previous.id);
+      }
+    }
     this.servers = servers;
-    void this.closeAll();
+    this.closeServers(changed);
   }
 
   async list(): Promise<ToolDefinition[]> {
@@ -181,6 +206,7 @@ export class McpManager {
     const description = remoteDescription
       ? `${remoteDescription}\n\nMCP server: ${server.label} (${server.id}).`
       : `Call ${remoteName} on MCP server ${server.label} (${server.id}).`;
+    const serverKey = connectionKey(server);
     const ctx = this.ctx;
     return defineTool(
       {
@@ -194,6 +220,14 @@ export class McpManager {
           if (current === undefined) {
             return {
               content: [{ type: "text", text: `MCP server "${server.id}" is not active.` }],
+              isError: true,
+            };
+          }
+          if (connectionKey(current) !== serverKey) {
+            return {
+              content: [
+                { type: "text", text: `MCP server "${server.id}" configuration changed; refresh tools.` },
+              ],
               isError: true,
             };
           }
@@ -212,6 +246,22 @@ export class McpManager {
       },
       ctx,
     );
+  }
+
+  private closeServers(ids: ReadonlySet<string>): void {
+    const closing: Promise<unknown>[] = [];
+    for (const id of ids) {
+      const pending = this.pending.get(id);
+      if (pending === undefined) continue;
+      this.pending.delete(id);
+      closing.push(
+        pending.then(
+          (connection) => connection.close(),
+          () => undefined,
+        ),
+      );
+    }
+    if (closing.length > 0) void Promise.allSettled(closing);
   }
 
   private async closeAll(): Promise<void> {
