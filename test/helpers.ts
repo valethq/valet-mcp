@@ -90,7 +90,7 @@ export const server = (id: string): NormalizedServer => ({
   id,
   label: id,
   transport: "streamable-http",
-  enabled: true,
+  active: true,
   url: `https://mcp.example/${id}`,
   headers: {},
   args: [],

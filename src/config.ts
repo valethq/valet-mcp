@@ -4,7 +4,7 @@ export interface McpServerConfig {
   id: string;
   label?: string;
   transport?: TransportKind;
-  enabled?: boolean;
+  active?: boolean;
   url?: string;
   headers?: Record<string, string>;
   command?: string;
@@ -22,7 +22,7 @@ export interface NormalizedServer {
   id: string;
   label: string;
   transport: TransportKind;
-  enabled: boolean;
+  active: boolean;
   url?: string;
   headers: Record<string, string>;
   command?: string;
@@ -39,6 +39,7 @@ export interface NormalizeResult {
 
 const ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const DEFAULT_TIMEOUT_MS = 60_000;
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "::1"]);
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() !== "" ? v : undefined);
 const strings = (v: unknown): string[] =>
@@ -49,6 +50,21 @@ const stringMap = (v: unknown): Record<string, string> | undefined => {
   for (const [k, value] of Object.entries(v)) if (typeof value === "string") out[k] = value;
   return out;
 };
+
+function validHttpUrl(at: string, url: string, errors: string[]): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    errors.push(`${at}.url is not a valid URL`);
+    return false;
+  }
+  if (parsed.protocol === "https:") return true;
+  const host = parsed.hostname.replace(/^\[|\]$/g, "");
+  if (parsed.protocol === "http:" && LOOPBACK.has(host)) return true;
+  errors.push(`${at}.url must use https (http is only allowed for loopback servers)`);
+  return false;
+}
 
 export function normalizeServers(config: McpPluginConfig | undefined): NormalizeResult {
   const errors: string[] = [];
@@ -73,21 +89,23 @@ export function normalizeServers(config: McpPluginConfig | undefined): Normalize
       errors.push(`${at}.url is required for streamable-http`);
       continue;
     }
+    if (transport === "streamable-http" && url !== undefined && !validHttpUrl(at, url, errors)) continue;
     if (transport === "stdio" && command === undefined) {
       errors.push(`${at}.command is required for stdio`);
       continue;
     }
+    const cwd = str(raw?.cwd);
     servers.push({
       id,
       label: str(raw?.label) ?? id,
       transport,
-      enabled: raw?.enabled !== false,
+      active: raw?.active !== false,
       ...(url !== undefined && { url }),
       headers: stringMap(raw?.headers) ?? {},
       ...(command !== undefined && { command }),
       args: strings(raw?.args),
       env: stringMap(raw?.env) ?? {},
-      ...(str(raw?.cwd) !== undefined && { cwd: str(raw?.cwd) }),
+      ...(cwd !== undefined && { cwd }),
       timeoutMs:
         typeof raw?.timeoutMs === "number" && Number.isFinite(raw.timeoutMs) && raw.timeoutMs > 0
           ? Math.trunc(raw.timeoutMs)

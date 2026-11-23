@@ -16,22 +16,53 @@ const clean = (value: string): string =>
     .replace(/^_+|_+$/g, "")
     .replace(/_{2,}/g, "_");
 
-function uniqueName(serverId: string, remoteName: string, used: Set<string>): string {
-  const base = `mcp_${clean(serverId)}__${clean(remoteName)}`.slice(0, MAX_NAME).replace(/_+$/g, "");
-  const first = base || "mcp_tool";
-  if (!used.has(first)) {
-    used.add(first);
-    return first;
+function baseName(serverId: string, remoteName: string): string {
+  return `mcp_${clean(serverId)}__${clean(remoteName)}`.slice(0, MAX_NAME).replace(/_+$/g, "") || "mcp_tool";
+}
+
+function hashOf(seed: string): string {
+  return createHash("sha256").update(seed).digest("hex").slice(0, 8);
+}
+
+function suffixed(base: string, suffix: string): string {
+  const prefix = base.slice(0, MAX_NAME - suffix.length - 1).replace(/_+$/g, "") || "mcp_tool";
+  return `${prefix}_${suffix}`;
+}
+
+function claimName(candidate: string, used: Set<string>, seed: string): string {
+  if (!used.has(candidate)) {
+    used.add(candidate);
+    return candidate;
   }
-  const hash = createHash("sha256").update(`${serverId}\0${remoteName}`).digest("hex").slice(0, 8);
+  const hash = hashOf(seed);
   for (let i = 0; ; i++) {
-    const suffix = i === 0 ? hash : `${hash}${i.toString(36)}`;
-    const candidate = `${first.slice(0, MAX_NAME - suffix.length - 1)}_${suffix}`;
-    if (!used.has(candidate)) {
-      used.add(candidate);
-      return candidate;
+    const name = suffixed(candidate, i === 0 ? hash : `${hash}${i.toString(36)}`);
+    if (!used.has(name)) {
+      used.add(name);
+      return name;
     }
   }
+}
+
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (typeof value === "object" && value !== null) {
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(value).sort()) {
+      const next = canonical((value as Record<string, unknown>)[key]);
+      if (next !== undefined) out[key] = next;
+    }
+    return out;
+  }
+  return value;
+}
+
+const errorName = (error: unknown): string => (error instanceof Error ? error.name : typeof error);
+
+interface FetchedServer {
+  server: NormalizedServer;
+  connection: McpConnection;
+  remote: Tool[];
 }
 
 export class McpManager {
@@ -43,7 +74,8 @@ export class McpManager {
     private connect: ConnectMcp = connectMcp,
   ) {
     this.setConfig(ctx.config);
-    ctx.onConfigChange((next) => this.setConfig(next));
+    // Tools re-read ctx.config on every list, so cmd: refs refresh from the cache.
+    ctx.onConfigChange(() => undefined);
     ctx.onDispose(() => this.dispose());
   }
 
@@ -54,50 +86,68 @@ export class McpManager {
   setConfig(config: McpPluginConfig | undefined): void {
     const normalized = normalizeServers(config);
     for (const error of normalized.errors) this.ctx.log.warn("invalid MCP server config", { error });
-    this.servers = normalized.servers.filter((server) => server.enabled);
+    const servers = normalized.servers.filter((server) => server.active);
+    if (JSON.stringify(canonical(servers)) === JSON.stringify(canonical(this.servers))) return;
+    this.servers = servers;
     void this.closeAll();
   }
 
   async list(): Promise<ToolDefinition[]> {
-    const groups = await Promise.all(
-      this.servers.map(async (server) => {
+    this.setConfig(this.ctx.config);
+    const used = new Set<string>();
+    const fetched = await Promise.all(
+      this.servers.map(async (server): Promise<FetchedServer | undefined> => {
         try {
-          return await this.toolsFor(server);
+          return await this.fetchServer(server);
         } catch (error) {
-          this.ctx.log.warn("MCP server unavailable", {
-            server: server.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          this.ctx.log.warn("MCP server unavailable", { server: server.id, error: errorName(error) });
           this.pending.delete(server.id);
-          return [] as ToolDefinition[];
+          return undefined;
         }
       }),
     );
-    return groups.flat().sort((a, b) => a.name.localeCompare(b.name));
+    const tools: ToolDefinition[] = [];
+    for (const item of fetched) {
+      if (item !== undefined)
+        tools.push(...this.definitions(item.server, item.connection, item.remote, used));
+    }
+    return tools.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async dispose(): Promise<void> {
     await this.closeAll();
   }
 
-  private async toolsFor(server: NormalizedServer): Promise<ToolDefinition[]> {
+  private async fetchServer(server: NormalizedServer): Promise<FetchedServer> {
     const connection = await this.connection(server);
-    let remote: Tool[];
     try {
-      remote = await this.listRemote(connection, server);
+      return { server, connection, remote: await this.listRemote(connection, server) };
     } catch (error) {
       this.pending.delete(server.id);
       await connection.close().catch(() => undefined);
       throw error;
     }
-    const used = new Set<string>();
+  }
+
+  private definitions(
+    server: NormalizedServer,
+    connection: McpConnection,
+    remote: Tool[],
+    used: Set<string>,
+  ): ToolDefinition[] {
+    const usable = remote.filter((tool) => {
+      if (tool.execution?.taskSupport !== "required") return true;
+      this.ctx.log.debug("skipping task-only MCP tool", { server: server.id, tool: tool.name });
+      return false;
+    });
+    const names = usable.map((tool) => ({ tool, base: baseName(server.id, tool.name) }));
+    const counts = new Map<string, number>();
+    for (const { base } of names) counts.set(base, (counts.get(base) ?? 0) + 1);
     const tools: ToolDefinition[] = [];
-    for (const tool of remote) {
-      if (tool.execution?.taskSupport === "required") {
-        this.ctx.log.debug("skipping task-only MCP tool", { server: server.id, tool: tool.name });
-        continue;
-      }
-      tools.push(this.definition(server, connection, tool, used));
+    for (const { tool, base } of names) {
+      const seed = `${server.id}\0${tool.name}`;
+      const candidate = (counts.get(base) ?? 0) > 1 ? suffixed(base, hashOf(seed)) : base;
+      tools.push(this.definition(server, connection, tool, claimName(candidate, used, seed)));
     }
     return tools;
   }
@@ -107,7 +157,7 @@ export class McpManager {
     let cursor: string | undefined;
     do {
       const page = await connection.listTools(cursor === undefined ? undefined : { cursor }, {
-        timeout: Math.min(server.timeoutMs, 10_000),
+        timeout: server.timeoutMs,
         maxTotalTimeout: server.timeoutMs,
       });
       tools.push(...page.tools);
@@ -131,10 +181,9 @@ export class McpManager {
     server: NormalizedServer,
     connection: McpConnection,
     tool: Tool,
-    used: Set<string>,
+    name: string,
   ): ToolDefinition {
     const remoteName = tool.name;
-    const name = uniqueName(server.id, remoteName, used);
     const remoteDescription = tool.description?.trim();
     const description = remoteDescription
       ? `${remoteDescription}\n\nMCP server: ${server.label} (${server.id}).`

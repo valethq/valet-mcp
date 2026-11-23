@@ -27,7 +27,7 @@
               {
                 "id": "servers",
                 "label": "MCP servers",
-                "summary": "Each enabled server's tools are exposed to valet runs as mcp_<server>__<tool>.",
+                "summary": "Each active server's tools are exposed to valet runs as mcp_<server>__<tool>.",
                 "input": {
                   "type": "list",
                   "item": {
@@ -60,11 +60,11 @@
                         "summary": "Remote MCP over Streamable HTTP, or a local command over stdio."
                       },
                       {
-                        "id": "enabled",
+                        "id": "active",
                         "type": "bool",
                         "default": true,
-                        "label": "Enabled",
-                        "summary": "Disabled servers are ignored until enabled."
+                        "label": "Active",
+                        "summary": "Inactive servers are ignored until active."
                       },
                       {
                         "id": "url",

@@ -6,8 +6,8 @@ import { call, fakeConnection, fakeCtx, textOf, tool } from "./helpers";
 const config = {
   servers: [
     { id: "github", label: "GitHub", url: "https://mcp.example/github" },
-    { id: "local", transport: "stdio" as const, command: "node", args: ["server.js"], enabled: true },
-    { id: "off", enabled: false, url: "https://mcp.example/off" },
+    { id: "local", transport: "stdio" as const, command: "node", args: ["server.js"], active: true },
+    { id: "off", active: false, url: "https://mcp.example/off" },
   ],
 };
 
@@ -27,7 +27,7 @@ function managerFor() {
     if (!found) throw new Error(`unexpected server ${server.id}`);
     return found.connection;
   });
-  return { manager, github, local };
+  return { manager, github, local, config };
 }
 
 test("lists remote MCP tools as namespaced Valet tools", async () => {
@@ -77,5 +77,27 @@ test("allowedTools applies the same ACL to dynamic definitions", async () => {
   );
   expect(allowed).toHaveLength(2);
   expect(denied).toHaveLength(0);
+  await manager.dispose();
+});
+
+test("re-reads ctx config on each list", async () => {
+  const { manager, local, config } = managerFor();
+  expect(await manager.list()).toHaveLength(2);
+  const second = (config.servers as { active?: boolean }[])[1];
+  if (second !== undefined) second.active = false;
+  const tools = await manager.list();
+  expect(tools.map((t) => t.name)).toEqual(["mcp_github__search_issues"]);
+  expect(local.closed()).toBe(true);
+  await manager.dispose();
+});
+
+test("keeps colliding remote names unique and stable", async () => {
+  const ctx = fakeCtx({ servers: [{ id: "demo", url: "https://mcp.example/demo" }] });
+  const conn = fakeConnection([tool("a.b"), tool("a b"), tool("a_b")]);
+  const manager = new McpManager(ctx, async () => conn.connection);
+  const names = (await manager.list()).map((t) => t.name);
+  expect(names).toHaveLength(3);
+  expect(new Set(names).size).toBe(3);
+  for (const name of names) expect(name).toMatch(/^mcp_demo__a_b_[0-9a-f]{8}$/);
   await manager.dispose();
 });
