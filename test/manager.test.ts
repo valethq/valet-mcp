@@ -133,20 +133,53 @@ test("saved tools stay pinned to the config they were listed with", async () => 
   await manager.dispose();
 });
 
-test("credential refresh keeps listed tools callable", async () => {
-  const { manager, github, config } = managerFor();
-  const servers = config.servers as { id: string; headers?: Record<string, string> }[];
-  const githubServer = servers[0];
-  if (githubServer !== undefined) githubServer.headers = { Authorization: "Bearer old" };
-  const tools = await manager.list();
-  const githubTool = tools.find((t) => t.name.startsWith("mcp_github__search_issues_"));
-  expect(githubTool).toBeDefined();
-  if (githubServer !== undefined) githubServer.headers = { Authorization: "Bearer new" };
+test("credential refresh reconnects and keeps listed tools callable", async () => {
+  const url = "https://mcp.example/svc";
+  const config = { servers: [{ id: "svc", url, headers: { Authorization: "Bearer old" } }] };
+  const ctx = fakeCtx(config);
+  const oldServer = fakeConnection([tool("echo")]);
+  const newServer = fakeConnection([tool("echo")]);
+  const manager = new McpManager(ctx, async (server) => {
+    const auth = server.headers.Authorization;
+    if (auth === "Bearer old") return oldServer.connection;
+    if (auth === "Bearer new") return newServer.connection;
+    throw new Error(`unexpected auth ${auth}`);
+  });
+  const listed = (await manager.list())[0];
+  if (listed === undefined) throw new Error("missing tool");
+  const svc = config.servers[0];
+  if (svc !== undefined) svc.headers.Authorization = "Bearer new";
 
-  const result = await githubTool?.invoke({ q: "refresh" }, call());
-  expect(result?.isError).not.toBe(true);
-  expect(textOf(result ?? { content: [] })).toBe("ok");
-  expect(github.calls).toEqual([{ name: "search.issues", arguments: { q: "refresh" } }]);
+  const result = await listed.invoke({ q: "refresh" }, call());
+  expect(result.isError).not.toBe(true);
+  expect(textOf(result)).toBe("ok");
+  expect(oldServer.calls).toEqual([]);
+  expect(newServer.calls).toEqual([{ name: "echo", arguments: { q: "refresh" } }]);
+  await manager.dispose();
+});
+
+test("header backend change does not call a changed tool surface", async () => {
+  const url = "https://mcp.example/svc";
+  const config = { servers: [{ id: "svc", url, headers: { Authorization: "Bearer old" } }] };
+  const ctx = fakeCtx(config);
+  const oldServer = fakeConnection([tool("echo")]);
+  const newServer = fakeConnection([tool("other")]);
+  const manager = new McpManager(ctx, async (server) => {
+    const auth = server.headers.Authorization;
+    if (auth === "Bearer old") return oldServer.connection;
+    if (auth === "Bearer new") return newServer.connection;
+    throw new Error(`unexpected auth ${auth}`);
+  });
+  const listed = (await manager.list())[0];
+  if (listed === undefined) throw new Error("missing tool");
+  const svc = config.servers[0];
+  if (svc !== undefined) svc.headers.Authorization = "Bearer new";
+
+  const result = await listed.invoke({ q: "refresh" }, call());
+  expect(result.isError).toBe(true);
+  expect(textOf(result)).toContain("tools changed");
+  expect(oldServer.calls).toEqual([]);
+  expect(newServer.calls).toEqual([]);
   await manager.dispose();
 });
 

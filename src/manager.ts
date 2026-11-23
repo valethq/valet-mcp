@@ -207,6 +207,19 @@ export class McpManager {
     return tools;
   }
 
+  private async verifyListedTool(
+    connection: McpConnection,
+    server: NormalizedServer,
+    remoteName: string,
+    expectedSchema: string,
+  ): Promise<boolean> {
+    const remote = await this.listRemote(connection, server);
+    return remote.some(
+      (candidate) =>
+        candidate.name === remoteName && JSON.stringify(canonical(candidate.inputSchema)) === expectedSchema,
+    );
+  }
+
   private connection(server: NormalizedServer): Promise<McpConnection> {
     const existing = this.pending.get(server.id);
     if (existing !== undefined) return existing;
@@ -225,6 +238,8 @@ export class McpManager {
       ? `${remoteDescription}\n\nMCP server: ${server.label} (${server.id}).`
       : `Call ${remoteName} on MCP server ${server.label} (${server.id}).`;
     const listedToolKey = toolKey(server);
+    const expectedSchema = JSON.stringify(canonical(tool.inputSchema));
+    let listedConnectionKey = connectionKey(server);
     const ctx = this.ctx;
     return defineTool(
       {
@@ -249,7 +264,31 @@ export class McpManager {
               isError: true,
             };
           }
+          const currentConnectionKey = connectionKey(current);
           const connection = await this.connection(current);
+          if (currentConnectionKey !== listedConnectionKey) {
+            let verified = false;
+            try {
+              verified = await this.verifyListedTool(connection, current, remoteName, expectedSchema);
+            } catch (error) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `MCP server "${server.id}" is unavailable: ${errorName(error)}`,
+                  },
+                ],
+                isError: true,
+              };
+            }
+            if (!verified) {
+              return {
+                content: [{ type: "text", text: `MCP server "${server.id}" tools changed; refresh tools.` }],
+                isError: true,
+              };
+            }
+            listedConnectionKey = currentConnectionKey;
+          }
           const timeout = current.timeoutMs;
           const result = await connection.callTool(
             { name: remoteName, arguments: input as Record<string, unknown> },
