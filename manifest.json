@@ -27,7 +27,7 @@
               {
                 "id": "servers",
                 "label": "MCP servers",
-                "summary": "Each active server's tools are exposed to valet runs as mcp_<server>__<tool>.",
+                "summary": "Each active server's tools are exposed to valet runs as mcp_<server>__<tool>_<hash>.",
                 "input": {
                   "type": "list",
                   "item": {
