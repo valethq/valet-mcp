@@ -39,9 +39,22 @@ const server = Bun.serve({
                   required: ["text"],
                 },
               },
+              {
+                name: "tuple",
+                description: "Tuple output",
+                inputSchema: { type: "object" },
+                outputSchema: {
+                  type: "object",
+                  properties: { pair: { type: "array", prefixItems: [{ type: "string" }], items: false } },
+                  required: ["pair"],
+                },
+              },
             ],
           };
         case "tools/call":
+          if (body.params?.name === "tuple") {
+            return { content: [{ type: "text", text: "tuple-ok" }], structuredContent: { pair: ["ok"] } };
+          }
           return { content: [{ type: "text", text: `echo:${JSON.stringify(body.params?.arguments)}` }] };
         default:
           return {};
@@ -68,9 +81,13 @@ test("connectMcp lists and calls tools over Streamable HTTP", async () => {
   });
   const manager = new McpManager(ctx);
   const tools = await manager.list();
-  expect(tools.map((t) => t.name)).toEqual(["mcp_fake__echo_text"]);
+  expect(tools.map((t) => t.name)).toEqual(["mcp_fake__echo_text", "mcp_fake__tuple"]);
   const result = await tools[0]?.invoke({ text: "hello" }, call());
   expect(textOf(result ?? { content: [] })).toBe('echo:{"text":"hello"}');
+  const tuple = tools.find((t) => t.name === "mcp_fake__tuple");
+  const tupleResult = await tuple?.invoke({}, call());
+  expect(tupleResult?.isError).not.toBe(true);
+  expect(textOf(tupleResult ?? { content: [] })).toContain("tuple-ok");
   expect(auth).toBe("Bearer test-secret");
   expect(requests.map((r) => r.body.method)).toContain("initialize");
   expect(requests.map((r) => r.body.method)).toContain("tools/list");

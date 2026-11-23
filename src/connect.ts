@@ -2,8 +2,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import type { CallToolRequest, ListToolsRequest } from "@modelcontextprotocol/sdk/types.js";
-import type { ConnectMcp, McpConnection } from "./types";
+import {
+  CallToolResultSchema,
+  type CallToolRequest,
+  type ListToolsRequest,
+} from "@modelcontextprotocol/sdk/types.js";
+import type { ConnectMcp } from "./types";
 
 export const connectMcp: ConnectMcp = async (server, version) => {
   const client = new Client({ name: "valet-mcp", version }, { capabilities: {} });
@@ -34,7 +38,12 @@ export const connectMcp: ConnectMcp = async (server, version) => {
       };
     },
     callTool: async (params: CallToolRequest["params"], options?: RequestOptions) =>
-      (await client.callTool(params, undefined, options)) as Awaited<ReturnType<McpConnection["callTool"]>>,
-    close: () => client.close(),
+      client.request({ method: "tools/call", params }, CallToolResultSchema, options),
+    close: async () => {
+      if (transport instanceof StreamableHTTPClientTransport) {
+        await transport.terminateSession().catch(() => undefined);
+      }
+      await client.close();
+    },
   };
 };
